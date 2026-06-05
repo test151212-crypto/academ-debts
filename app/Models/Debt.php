@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class Debt extends Model
 {
     protected $fillable = [
-        'student_id', 'discipline_id', 'assigned_by_id',
+        'freelancer_id', 'discipline_id', 'assigned_by_id',
         'status', 'grade_value', 'grade_scale', 'comment',
     ];
 
@@ -19,9 +19,9 @@ class Debt extends Model
         'PASS_FAIL' => 'Зачёт / Незачёт',
     ];
 
-    public function student()
+    public function freelancer()
     {
-        return $this->belongsTo(User::class, 'student_id');
+        return $this->belongsTo(User::class, 'freelancer_id');
     }
 
     public function discipline()
@@ -76,7 +76,7 @@ class Debt extends Model
         return (string)$this->grade_value;
     }
 
-    public function close(User $teacher, ?float $grade = null, ?string $scale = null): void
+    public function close(User $jobgiver, ?float $grade = null, ?string $scale = null): void
     {
         $old = $this->status;
 
@@ -90,11 +90,11 @@ class Debt extends Model
             'debt_id'       => $this->id,
             'old_status'    => $old,
             'new_status'    => self::STATUS_CLOSED,
-            'changed_by_id' => $teacher->id,
+            'changed_by_id' => $jobgiver->id,
         ]);
 
         Notification::send(
-            $this->student_id,
+            $this->freelancer_id,
             Notification::TYPE_DEBT_CLOSED,
             'Задолженность закрыта',
             "Ваша задолженность по дисциплине «{$this->discipline->name}» была закрыта.",
