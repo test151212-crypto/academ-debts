@@ -6,10 +6,10 @@ namespace App\Http\Controllers;
 
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
-use App\Models\{Debt, Retake, RetakeChangeRequest, TeacherRoleRequest, Notification, User};
+use App\Models\{Debt, Retake, RetakeChangeRequest, JobgiverRoleRequest, Notification, User};
 
 
-class TeacherController extends Controller
+class JobgiverController extends Controller
 {
     public function dashboard()
     {
@@ -19,15 +19,15 @@ class TeacherController extends Controller
 
         $openDebts   = Debt::whereIn('discipline_id', $disciplineIds)->where('status', 'DEBT')->count();
         $closedDebts = Debt::whereIn('discipline_id', $disciplineIds)->where('status', 'CLOSED')->count();
-        $retakes     = $user->retakesAsTeacher()->where('status', 'SCHEDULED')->count();
+        $retakes     = $user->retakesAsJobgiver()->where('status', 'SCHEDULED')->count();
 
 
         $recentDebts = Debt::whereIn('discipline_id', $disciplineIds)
-            ->with('student', 'discipline')
+            ->with('freelancer', 'discipline')
             ->latest()->take(5)->get();
 
 
-        return view('teacher.dashboard', compact(
+        return view('jobgiver.dashboard', compact(
             'user', 'openDebts', 'closedDebts', 'retakes', 'recentDebts'
         ));
     }
@@ -40,11 +40,11 @@ class TeacherController extends Controller
 
 
         $debts = Debt::whereIn('discipline_id', $disciplineIds)
-            ->with('student', 'discipline', 'assignedBy')
+            ->with('freelancer', 'discipline', 'assignedBy')
             ->latest()->get();
 
 
-        return view('teacher.debts', compact('debts'));
+        return view('jobgiver.debts', compact('debts'));
     }
 
 
@@ -52,24 +52,24 @@ class TeacherController extends Controller
     {
         $user        = Auth::user();
         $disciplines = $user->disciplines;
-        $students    = User::where('is_teacher', false)
-                           ->where('is_dean', false)
+        $freelancers    = User::where('is_jobgiver', false)
+                           ->where('is_moderator', false)
                            ->where('is_admin', false)
                            ->with('group')->orderBy('last_name')->get();
 
-        return view('teacher.create-debt', compact('disciplines', 'students'));
+        return view('jobgiver.create-debt', compact('disciplines', 'freelancers'));
     }
 
 
     public function storeDebt(Request $request)
     {
         $request->validate([
-            'student_id'    => ['required', 'exists:users,id'],
+            'freelancer_id'    => ['required', 'exists:users,id'],
             'discipline_id' => ['required', 'exists:disciplines,id'],
             'comment'       => ['nullable', 'string', 'max:500'],
         ], [
-            'student_id.required'    => 'Выберите студента.',
-            'discipline_id.required' => 'Выберите дисциплину.',
+            'freelancer_id.required'    => 'Выберите фрилансера.',
+            'discipline_id.required' => 'Выберите заказ.',
         ]);
 
         $user = Auth::user();
@@ -80,7 +80,7 @@ class TeacherController extends Controller
         }
 
         $debt = Debt::create([
-            'student_id'     => $request->student_id,
+            'freelancer_id'     => $request->freelancer_id,
             'discipline_id'  => $request->discipline_id,
             'assigned_by_id' => $user->id,
             'status'         => 'DEBT',
@@ -88,14 +88,14 @@ class TeacherController extends Controller
         ]);
 
         Notification::send(
-            $request->student_id,
+            $request->freelancer_id,
             Notification::TYPE_DEBT_CREATED,
             'Новая задолженность',
             "Вам выставлена задолженность по дисциплине «{$debt->discipline->name}».",
             ['related_debt_id' => $debt->id]
         );
 
-        return redirect()->route('teacher.debts')->with('success', 'Задолженность выставлена.');
+        return redirect()->route('jobgiver.debts')->with('success', 'Задолженность выставлена.');
     }
 
 
@@ -104,7 +104,7 @@ class TeacherController extends Controller
         $user = Auth::user();
 
 
-        // Проверка — преподаватель ведёт эту дисциплину
+        // Проверка — заказчик имеет этот заказ
         $disciplineIds = $user->disciplines()->pluck('disciplines.id');
         if (!$disciplineIds->contains($debt->discipline_id)) {
             abort(403);
@@ -124,14 +124,14 @@ class TeacherController extends Controller
         $debt->close($user, $request->grade_value, $request->grade_scale);
 
 
-        return back()->with('success', 'Задолженность закрыта. Оценка выставлена.');
+        return back()->with('success', 'Заказ закрыт. Оценка выставлена.');
     }
 
 
     public function retakes()
     {
-        $retakes = Auth::user()->retakesAsTeacher()
-            ->with('discipline', 'students')
+        $retakes = Auth::user()->retakesAsJobgiver()
+            ->with('discipline', 'freelancers')
             ->orderByDesc('start_datetime')
             ->get();
 
@@ -141,7 +141,7 @@ class TeacherController extends Controller
         }
 
 
-        return view('teacher.retakes', compact('retakes'));
+        return view('jobgiver.retakes', compact('retakes'));
     }
 
 
@@ -149,12 +149,12 @@ class TeacherController extends Controller
     {
         $user = Auth::user();
 
-        if (!$retake->teachers->contains($user->id)) {
+        if (!$retake->jobgivers->contains($user->id)) {
             abort(403);
         }
 
-        $retake->load('discipline', 'students.group');
-        return view('teacher.retake-results', compact('retake'));
+        $retake->load('discipline', 'freelancers.group');
+        return view('jobgiver.retake-results', compact('retake'));
     }
 
 
@@ -162,7 +162,7 @@ class TeacherController extends Controller
     {
         $user = Auth::user();
 
-        if (!$retake->teachers->contains($user->id)) {
+        if (!$retake->jobgivers->contains($user->id)) {
             abort(403);
         }
 
@@ -173,8 +173,8 @@ class TeacherController extends Controller
             'results.*.grade_scale' => ['nullable', 'in:0_5,0_100,PASS_FAIL'],
         ]);
 
-        foreach ($request->results as $studentId => $data) {
-            $retake->students()->updateExistingPivot($studentId, [
+        foreach ($request->results as $freelancerId => $data) {
+            $retake->freelancers()->updateExistingPivot($freelancerId, [
                 'result_status' => $data['result_status'],
                 'grade_value'   => $data['grade_value'] ?? null,
                 'grade_scale'   => $data['grade_scale'] ?? null,
@@ -182,9 +182,9 @@ class TeacherController extends Controller
                 'updated_at'    => now(),
             ]);
 
-            // Автозакрытие долга если сдал
+            // Автозакрытие заказа если сдал
             if ($data['result_status'] === 'PASSED') {
-                $debt = Debt::where('student_id', $studentId)
+                $debt = Debt::where('freelancer_id', $freelancerId)
                     ->where('discipline_id', $retake->discipline_id)
                     ->where('status', 'DEBT')
                     ->first();
@@ -206,12 +206,12 @@ class TeacherController extends Controller
             ->latest()->get();
 
 
-        $retakes = Auth::user()->retakesAsTeacher()
+        $retakes = Auth::user()->retakesAsJobgiver()
             ->where('status', '!=', 'COMPLETED')
             ->with('discipline')->get();
 
 
-        return view('teacher.requests', compact('requests', 'retakes'));
+        return view('jobgiver.requests', compact('requests', 'retakes'));
     }
 
 
@@ -242,6 +242,6 @@ class TeacherController extends Controller
         ]);
 
 
-        return back()->with('success', 'Заявка подана. Ожидайте решения деканата.');
+        return back()->with('success', 'Заявка подана. Ожидайте решения модерации.');
     }
 }
